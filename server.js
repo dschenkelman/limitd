@@ -18,7 +18,7 @@ var db = require('./lib/db');
 var enableDestroy = require('server-destroy');
 
 var defaults = {
-  port:      9231,
+  port: 9231,
   hostname:  '0.0.0.0',
   log_level: 'info',
   protocol:  'protocol-buffers'
@@ -155,4 +155,3 @@ LimitdServer.prototype.stop = function () {
 
 
 module.exports = LimitdServer;
-

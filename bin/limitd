@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+console.log('dadada');
+
 var program = require('commander');
 var path = require('path');
 var fs = require('fs');

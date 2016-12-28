@@ -14,8 +14,6 @@ services:
       - '9696'
 
   limitd2:
-    depends_on:
-      - "limitd"
     build:
       context: .
       dockerfile: ./Dockerfile

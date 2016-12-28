@@ -1,15 +1,14 @@
 #!/usr/bin/env node
 
-var TChannel = require('tchannel');
 var program = require('commander');
 var path = require('path');
 var fs = require('fs');
 var yaml = require('js-yaml');
 var _ = require('lodash');
 var LimitdServer = require('../server');
-var Ringpop = require('ringpop');
 var dns = require('dns');
 var async = require('async');
+var ClusterNode = require('../clusterNode');
 
 program.version(require('../package').version)
   .option('-d --db <file>', 'Path to the database.')
@@ -47,65 +46,38 @@ var hostPorts = {
     'limitd2': 9696
 };
 
-var hosts = Object.keys(hostPorts);
+function resolveHosts(hostPorts, done){
+    var hosts = Object.keys(hostPorts);
+    console.log('fetching dns names for bootstrap nodes');
+    async.map(hosts, dns.resolve4, function(err, results){
+        if (err) { return done(err); }
+
+        done(null, _.zip(hosts, results.map(function(addresses){
+            return addresses[0];
+        })).reduce(function(nodes, element){
+            var hostName = element[0];
+            var port = hostPorts[hostName];
+            nodes[hostName] = { ip: element[1], port: port };
+
+            return nodes;
+        }, {}));
+    });
+}
 
 console.log('config', config);
 
-console.log('fetching dns names for bootstrap nodes');
-async.map(hosts, dns.resolve4, function(err, results){
+resolveHosts(hostPorts, function(err, socketByHost){
     if (err) { return console.error(err); }
 
-    console.log('names resolved', results);
-    
-    var nodes = _.zip(hosts, results.map(function(addresses){
-        return addresses[0];
-    })).reduce(function(nodes, element){
-        var hostName = element[0];
-        var port = hostPorts[hostName];
-        nodes[hostName] = { ip: element[1], port: port };
+    console.log('socketByHost', socketByHost);
 
-        return nodes;
-    }, {});
-
-    var bootstrapNodes = { limitd: nodes['limitd'] };
-
-    var bootstrapAddresses = _.values(bootstrapNodes).map(function(host){
-        return host.ip + ':' + host.port;
+    var node = new ClusterNode({
+        socketByHost: socketByHost,
+        name: config.hostname,
+        bootstrapNodes: [ 'limitd', 'limitd2' ]
     });
 
-    var thisNode = nodes[config.hostname];
-
-    console.log('bootstrapNodes', bootstrapNodes);
-
-    console.log('thisNode', thisNode);
-
-    var tchannel = new TChannel();
-
-    var ringpop = new Ringpop({
-        app: 'limitd',
-        hostPort: thisNode.ip + ':' + thisNode.port,
-        channel:  tchannel.makeSubChannel({
-            serviceName: 'ringpop',
-            trace: false
-        }),
-        logger: createLogger('limitd-ringpop')
-    });
-
-    ringpop.appChannel = tchannel.makeSubChannel({
-        serviceName: 'limitd'
-    });
-
-    ringpop.setupChannel();
-
-    tchannel.listen(thisNode.port, 
-        thisNode.ip, 
-        function onListening() {
-            console.log('listening', bootstrapAddresses);
-            console.log('bootstrapping ringpop');
-            ringpop.bootstrap(bootstrapAddresses, onBootstrap);
-        });
-
-    function onBootstrap(err) {
+    node.joinCluster(function onBootstrap(err) {
         console.log('on bootstrap');
         if (err) {
             // Fatal error
@@ -123,7 +95,7 @@ async.map(hosts, dns.resolve4, function(err, results){
             var profiler = require('v8-profiler');
             profiler.startProfiling('1', true);
         }
-    }
+    });
 });
 
 function finish () {
@@ -141,24 +113,6 @@ function finish () {
   setTimeout(function () {
     process.exit(0);
   });
-}
-
-function createLogger(name) {
-    return {
-        trace: function noop() {},
-        debug: enrich('debug', 'log'),
-        info: enrich('info', 'log'),
-        warn: enrich('warn', 'error'),
-        error: enrich('error', 'error')
-    };f
-
-    function enrich(level, method) {
-        return function log() {
-            var args = [].slice.call(arguments);
-            args[0] = name + ' ' + level + ' ' + args[0];
-            console[method].apply(console, args);
-        };
-    }
 }
 
 process
